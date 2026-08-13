@@ -7,10 +7,10 @@ use ratatui::{crossterm, widgets::FrameExt};
 use ratatui::{
     buffer::Buffer,
     layout::{Rect, Direction, Constraint, Flex, Layout},
-    style::{Stylize, Color},
+    style::{Stylize, Color, Style},
     symbols::border,
     text::Line,
-    widgets::{Block, Paragraph, Widget, Borders, Padding},
+    widgets::{Block, Paragraph, Widget, Borders, Padding, Table, Row, TableState},
     DefaultTerminal, Frame,
 };
 use ratatui_explorer::{FileExplorerBuilder, Theme};
@@ -47,8 +47,6 @@ pub struct App {
     selected_path: Option<String>,
     throbber_state: throbber_widgets_tui::ThrobberState,
     results: Vec<akhtabooti_core::FilePIIs>,
-    selected_scan_result: usize,
-    scan_result_page: usize
 }
 
 impl App {
@@ -210,95 +208,78 @@ impl App {
     }
     
     fn scan_results(&mut self, terminal: &mut DefaultTerminal) -> Result<(), io::Error> {
+        let mut table_state = TableState::default();
+        table_state.select_first();
+        table_state.select_first_column();
         loop {
             terminal.draw(|frame| {
                 let title = Line::from(" akhtabooti ".bold());
                 let instructions = Line::from(vec![
-                    " (q) ".bold(), "quit |".into(),
-                ]);
-                let page_number = Line::from(vec![
-                    " index ".bold(),
-                    self.selected_scan_result.to_string().into(),
-                    " page ".bold(), 
-                    self.scan_result_page.to_string().into(),
-                    " ".into()
+                    " (↑) ".bold(), "prev |".into(),
+                    " (↓) ".bold(), "next |".into(),
+                    " (Enter) ".bold(), "expand |".into(),
+                    " (q) ".bold(), "quit ".into(),
                 ]);
 
                 let block = Block::bordered()
                     .title(title.centered())
                     .title_bottom(instructions.centered())
-                    .title_bottom(page_number.right_aligned())
                     .border_set(border::THICK);
 
                 let inner = block.inner(frame.area());
                 frame.render_widget(block, frame.area());
-               
-                let cols = 4;
-                let rows = 4;
-                let col_constraints = (0..cols).map(|_| Constraint::Fill(1));
-                let row_constraints = (0..rows).map(|_| Constraint::Fill(1));
-                let horizontal = Layout::horizontal(col_constraints).spacing(1);
-                let vertical = Layout::vertical(row_constraints).spacing(1);
-                let rows = vertical.split(inner);
-                let cells = rows.iter().flat_map(|&row| horizontal.split(row).to_vec());
+                
+                let header = Row::new(["filename","email_accounts", "phone_numbers", "other_piis"])
+                .style(Style::new().bold())
+                .bottom_margin(1);
 
-                for (i, cell) in cells.enumerate() {
-                    let index = (self.scan_result_page-1)*16 + i;
-                    if index < self.results.len() {
-                        let pii = &self.results[index];
-                        let color = if i == self.selected_scan_result { Color::Yellow } else { Color::Green };
-                        let title = Line::from(vec!["filename: ".bold(), pii.filename.clone().into()]);
-                        frame.render_widget(
-                            Paragraph::new(vec![
-                                Line::from(vec!["email_accounts: ".bold(), pii.email_accounts.len().to_string().into()]),
-                                Line::from(vec!["phone_numbers: ".bold(), pii.phone_numbers.len().to_string().into()]),
-                                Line::from(vec!["other_piis: ".bold(), pii.other_piis.len().to_string().into()]),
-                        ])
-                        .block(Block::new().fg(color).borders(Borders::ALL).title(title)),
-                        cell
-                        );
-                    }                
+                let mut rows = Vec::new();
+
+                for pii in &mut *self.results {
+                    let row = Row::new([pii.filename.clone(), pii.email_accounts.len().to_string(), pii.phone_numbers.len().to_string(), pii.other_piis.len().to_string()]);
+                    rows.push(row);
                 }
+
+                let widths = [
+                    Constraint::Percentage(70),
+                    Constraint::Percentage(10),
+                    Constraint::Percentage(10),
+                    Constraint::Percentage(10),
+                ];
+                let table = Table::new(rows, widths)
+                    .header(header)
+                    .column_spacing(1)
+                    .style(Color::White)
+                    .row_highlight_style(Style::new().on_black().bold())
+                    .column_highlight_style(Color::Gray)
+                    .cell_highlight_style(Style::new().reversed().yellow())
+                    .highlight_symbol("> ");
+
+                frame.render_stateful_widget(table, inner, &mut table_state);
+                        //
+                        // let color = if i == self.selected_scan_result { Color::Yellow } else { Color::Green };
+                        // let title = Line::from(vec!["filename: ".bold(), pii.filename.clone().into()]);
+                        // frame.render_widget(
+                        //     Paragraph::new(vec![
+                        //         Line::from(vec!["email_accounts: ".bold(), pii.email_accounts.len().to_string().into()]),
+                        //         Line::from(vec!["phone_numbers: ".bold(), pii.phone_numbers.len().to_string().into()]),
+                        //         Line::from(vec!["other_piis: ".bold(), pii.other_piis.len().to_string().into()]),
+                        // ])
+                        // .block(Block::new().fg(color).borders(Borders::ALL).title(title)),
+                        // cell
+                        // );
             })?;
         
             let event = read()?;
             if let Event::Key(key) = &event {
                 match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Right => {
-                        if self.selected_scan_result % 4 == 3 { self.selected_scan_result -= 3; } 
-                        else { self.selected_scan_result += 1; }
-                    },
-                    KeyCode::Up => {
-                        if self.selected_scan_result < 4 {
-                            if self.scan_result_page > 1 {
-                                self.selected_scan_result += 12;
-                                self.scan_result_page -= 1;
-                                terminal.clear()?;
-                            }
-                        } else { self.selected_scan_result -= 4; }
-                    },
-                    KeyCode::Left => {
-                        if self.selected_scan_result % 4 == 0 { self.selected_scan_result += 3; }
-                        else { self.selected_scan_result -= 1; }
-                    },
-                    KeyCode::Down => {
-                        let current_page_len = self.results.len()
-                            .saturating_sub((self.scan_result_page-1) * 16).min(16);
-                        let next_page_len = self.results.len()
-                            .saturating_sub(self.scan_result_page * 16);
-                        if self.selected_scan_result+4 < current_page_len {
-                            self.selected_scan_result += 4;
-                        } else {
-                            if next_page_len > 0 {
-                                self.selected_scan_result %= 4;
-                                self.scan_result_page += 1;
-                                terminal.clear()?;
-                            }
-                        }
-                    },
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Down => table_state.select_next(),
+                    KeyCode::Up => table_state.select_previous(),
+                    KeyCode::Right => table_state.select_next_column(),
+                    KeyCode::Left => table_state.select_previous_column(),
                     KeyCode::Enter => {
-                        self.expand_result(terminal)?;
+                        self.expand_result(terminal, table_state.selected().unwrap())?;
                     },
                     _ => {}
                 }
@@ -307,7 +288,7 @@ impl App {
         Ok(())
     }
     
-    fn expand_result(&mut self, terminal: &mut DefaultTerminal) -> Result<(), io::Error> {
+    fn expand_result(&mut self, terminal: &mut DefaultTerminal, index: usize) -> Result<(), io::Error> {
         loop {
             terminal.draw(|frame| {
                 let title = Line::from(" akhtabooti ".bold());
@@ -331,7 +312,6 @@ impl App {
                     ])
                     .split(inner);
                 
-                let index = (self.scan_result_page-1)*16 + self.selected_scan_result;
                 let pii = &self.results[index];
                 let max_lines = 8;
                         
@@ -397,8 +377,6 @@ impl Default for App {
             selected_path: None,
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             results: Vec::new(),
-            selected_scan_result: 0,
-            scan_result_page: 1
         }
     }
 }
@@ -407,10 +385,10 @@ impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let title = Line::from(" akhtabooti ".bold());
         let instructions = Line::from(vec![
-            " (q) ".bold(), "quit |".into(),
-            " (↑) ".bold(), " prev |".into(),
-            " (↓) ".bold(), " next |".into(),
-            " (Enter) ".bold(), "select ".into(),
+            " (↑) ".bold(), "prev |".into(),
+            " (↓) ".bold(), "next |".into(),
+            " (Enter) ".bold(), "select |".into(),
+            " (q) ".bold(), "quit ".into(),
         ]);
         let block = Block::bordered()
             .title(title.centered())
@@ -422,7 +400,7 @@ impl Widget for &App {
 
         let explore_label = match &self.selected_path {
             Some(path) => path.to_string(),
-            None => "[ Explore ]".to_string(),
+            None => "[ Select path to scan ]".to_string(),
         };
 
         let explore_button = Button::new(
