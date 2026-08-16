@@ -51,11 +51,8 @@ pub struct App {
 
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        while !self.exit {
-            self.sync_button_focus();
-            terminal.draw(|frame| self.draw(frame))?;
-            self.handle_events(terminal)?;
-        }
+        self.sync_button_focus();
+        self.main_menu(terminal)?;
         Ok(())
     }
 
@@ -69,43 +66,129 @@ impl App {
         self.exit_btn.focused = self.focus.is_focused(&FocusTarget::Exit);
     }
 
-    fn handle_events(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        match event::read()? {
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_events(key_event, terminal)?
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn handle_key_events(&mut self, key_event: KeyEvent, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        match key_event.code {
-            KeyCode::Char('q') => self.exit(),
-            KeyCode::Down => self.focus.next(),
-            KeyCode::Up => self.focus.prev(),
-            KeyCode::Enter => {
-                if self.focus.is_focused(&FocusTarget::Exit) {
-                    self.exit()
-                } else if self.focus.is_focused(&FocusTarget::Scan) {
-                    if let Some(path) = &self.selected_path {
-                        self.scanning(terminal, path.to_string())?;
-                        self.scan_results(terminal)?;
-                    }
-                } else if self.focus.is_focused(&FocusTarget::Explore) {
-                    let path = self.open_file_explorer(terminal)?;
-                    if !path.is_empty() {
-                        self.selected_path = Some(path);
-                    }
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
     fn exit(&mut self) {
         self.exit = true;
+    }
+
+    fn main_menu(&mut self, terminal: &mut DefaultTerminal) -> Result<(), io::Error> {
+        while !self.exit {
+            self.sync_button_focus();
+            terminal.draw(|frame| {
+                let title = Line::from(" akhtabooti ".bold());
+                let instructions = Line::from(vec![
+                    " (↑) ".bold(), "prev |".into(),
+                    " (↓) ".bold(), "next |".into(),
+                    " (Enter) ".bold(), "select |".into(),
+                    " (q) ".bold(), "quit ".into(),
+                ]);
+                let block = Block::bordered()
+                    .title(title.centered())
+                    .title_bottom(instructions.centered())
+                    .border_set(border::THICK);
+
+                let inner = block.inner(frame.area());
+                frame.render_widget(block, frame.area());
+
+                let explore_label = match &self.selected_path {
+                    Some(path) => path.to_string(),
+                    None => "[ Select path to scan ]".to_string(),
+                };
+
+                let explore_button = Button::new(
+                    &explore_label, 
+                    &self.explore_btn
+                ).variant(ButtonVariant::SingleLine);
+                let scan_button = Button::new(
+                    "[ Scan ]", 
+                    &self.scan_btn
+                ).variant(ButtonVariant::SingleLine);
+                let exit_button = Button::new(
+                    "[ Exit ]", 
+                    &self.exit_btn
+                ).variant(ButtonVariant::SingleLine);
+
+                let explore_w = explore_button.min_width();
+                let scan_w = scan_button.min_width();
+                let exit_w = exit_button.min_width();
+
+                let show_scan = self.selected_path.is_some();
+ 
+                let content = if show_scan {
+                    center(inner, Constraint::Fill(1), Constraint::Length(5))
+                } else {
+                    center(inner, Constraint::Fill(1), Constraint::Length(3))
+                };
+ 
+                if show_scan {
+                    let rows = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(content);
+ 
+                    let explore_area = center_horizontal(rows[0], Constraint::Length(explore_w));
+                    frame.render_widget(explore_button, explore_area);
+ 
+                    let scan_area = center_horizontal(rows[2], Constraint::Length(scan_w));
+                    frame.render_widget(scan_button, scan_area);
+ 
+                    let exit_area = center_horizontal(rows[4], Constraint::Length(exit_w));
+                    frame.render_widget(exit_button, exit_area);
+                } else {
+                    let rows = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(content);
+ 
+                    let explore_area = center_horizontal(rows[0], Constraint::Length(explore_w));
+                    frame.render_widget(explore_button, explore_area);
+ 
+                    let exit_area = center_horizontal(rows[2], Constraint::Length(exit_w));
+                    frame.render_widget(exit_button, exit_area);
+                }
+            });
+
+            let event = read()?;
+            if let Event::Key(key) = &event {
+                match key.code {
+                    KeyCode::Char('q') => self.exit(),
+                    KeyCode::Down => {
+                        self.focus.next();
+                        if self.selected_path.is_none() && self.focus.is_focused(&FocusTarget::Scan) {
+                            self.focus.next();
+                        }
+                    }
+                    KeyCode::Up => {
+                        self.focus.prev();
+                        if self.selected_path.is_none() && self.focus.is_focused(&FocusTarget::Scan) {
+                            self.focus.prev();
+                        }
+                    }
+                    KeyCode::Enter => {
+                        if self.focus.is_focused(&FocusTarget::Exit) {
+                            self.exit()
+                        } else if self.focus.is_focused(&FocusTarget::Scan) {
+                            if let Some(path) = &self.selected_path {
+                                self.scanning(terminal, path.to_string())?;
+                                self.scan_results(terminal)?;
+                            }
+                        } else if self.focus.is_focused(&FocusTarget::Explore) {
+                            let path = self.open_file_explorer(terminal)?;
+                            if !path.is_empty() {
+                                self.selected_path = Some(path);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        };
+        Ok(())
     }
 
     fn open_file_explorer(&mut self, terminal: &mut DefaultTerminal) -> Result<String, io::Error> {
@@ -284,7 +367,7 @@ impl App {
                     _ => {}
                 }
             }
-        }
+        };
         Ok(())
     }
     
@@ -383,63 +466,64 @@ impl Default for App {
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let title = Line::from(" akhtabooti ".bold());
-        let instructions = Line::from(vec![
-            " (↑) ".bold(), "prev |".into(),
-            " (↓) ".bold(), "next |".into(),
-            " (Enter) ".bold(), "select |".into(),
-            " (q) ".bold(), "quit ".into(),
-        ]);
-        let block = Block::bordered()
-            .title(title.centered())
-            .title_bottom(instructions.centered())
-            .border_set(border::THICK);
-
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        let explore_label = match &self.selected_path {
-            Some(path) => path.to_string(),
-            None => "[ Select path to scan ]".to_string(),
-        };
-
-        let explore_button = Button::new(
-            &explore_label, 
-            &self.explore_btn
-        ).variant(ButtonVariant::SingleLine);
-        let scan_button = Button::new(
-            "[ Scan ]", 
-            &self.scan_btn
-        ).variant(ButtonVariant::SingleLine);
-        let exit_button = Button::new(
-            "[ Exit ]", 
-            &self.exit_btn
-        ).variant(ButtonVariant::SingleLine);
-
-        let explore_w = explore_button.min_width();
-        let scan_w = scan_button.min_width();
-        let exit_w = exit_button.min_width();
-
-        let content = center(inner, Constraint::Fill(1), Constraint::Length(5));
-
-        let rows = Layout::vertical([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
-        .split(content);
-
-        let explore_area = center_horizontal(rows[0], Constraint::Length(explore_w));
-        explore_button.render_stateful(explore_area, buf);
-
-        let scan_area = center_horizontal(rows[2], Constraint::Length(scan_w));
-        scan_button.render_stateful(scan_area, buf);
-
-        let exit_area = center_horizontal(rows[4], Constraint::Length(exit_w));
-        exit_button.render_stateful(exit_area, buf);
     }
+//         let title = Line::from(" akhtabooti ".bold());
+//         let instructions = Line::from(vec![
+//             " (↑) ".bold(), "prev |".into(),
+//             " (↓) ".bold(), "next |".into(),
+//             " (Enter) ".bold(), "select |".into(),
+//             " (q) ".bold(), "quit ".into(),
+//         ]);
+//         let block = Block::bordered()
+//             .title(title.centered())
+//             .title_bottom(instructions.centered())
+//             .border_set(border::THICK);
+//
+//         let inner = block.inner(area);
+//         block.render(area, buf);
+//
+//         let explore_label = match &self.selected_path {
+//             Some(path) => path.to_string(),
+//             None => "[ Select path to scan ]".to_string(),
+//         };
+//
+//         let explore_button = Button::new(
+//             &explore_label, 
+//             &self.explore_btn
+//         ).variant(ButtonVariant::SingleLine);
+//         let scan_button = Button::new(
+//             "[ Scan ]", 
+//             &self.scan_btn
+//         ).variant(ButtonVariant::SingleLine);
+//         let exit_button = Button::new(
+//             "[ Exit ]", 
+//             &self.exit_btn
+//         ).variant(ButtonVariant::SingleLine);
+//
+//         let explore_w = explore_button.min_width();
+//         let scan_w = scan_button.min_width();
+//         let exit_w = exit_button.min_width();
+//
+//         let content = center(inner, Constraint::Fill(1), Constraint::Length(5));
+//
+//         let rows = Layout::vertical([
+//             Constraint::Length(1),
+//             Constraint::Length(1),
+//             Constraint::Length(1),
+//             Constraint::Length(1),
+//             Constraint::Length(1),
+//         ])
+//         .split(content);
+//
+//         let explore_area = center_horizontal(rows[0], Constraint::Length(explore_w));
+//         explore_button.render_stateful(explore_area, buf);
+//
+//         let scan_area = center_horizontal(rows[2], Constraint::Length(scan_w));
+//         scan_button.render_stateful(scan_area, buf);
+//
+//         let exit_area = center_horizontal(rows[4], Constraint::Length(exit_w));
+//         exit_button.render_stateful(exit_area, buf);
+//     }
 }
 
 fn main() -> io::Result<()> {
