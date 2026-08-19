@@ -138,7 +138,17 @@ pub struct App {
 impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         self.sync_button_focus();
-        self.main_menu(terminal)
+        
+        let path = self.open_file_explorer(terminal)?;
+        if !path.is_empty() {
+            self.selected_path = Some(path);
+        }
+
+        if let Some(path) = self.selected_path.clone() {
+            self.scanning(terminal, path)?;
+            self.scan_results(terminal)?;
+        }
+        Ok(())
     }
 
     fn sync_button_focus(&mut self) {
@@ -149,83 +159,6 @@ impl App {
 
     fn exit(&mut self) {
         self.exit = true;
-    }
-
-    fn main_menu(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        while !self.exit {
-            self.sync_button_focus();
-            terminal.draw(|frame| {
-                let instructions = Line::from(vec![
-                    " (↑) ".bold(), "prev |".into(),
-                    " (↓) ".bold(), "next |".into(),
-                    " (Enter) ".bold(), "select |".into(),
-                    " (q) ".bold(), "quit ".into(),
-                ]);
-                let block = app_block(Some(instructions));
-                let inner = block.inner(frame.area());
-                frame.render_widget(block, frame.area());
-
-                let explore_label = self.selected_path.clone()
-                    .unwrap_or_else(|| "[ Select path to scan ]".to_string());
-
-                let explore_button = Button::new(&explore_label, &self.explore_btn)
-                    .variant(ButtonVariant::SingleLine);
-                let scan_button = Button::new("[ Scan ]", &self.scan_btn)
-                    .variant(ButtonVariant::SingleLine);
-                let exit_button = Button::new("[ Exit ]", &self.exit_btn)
-                    .variant(ButtonVariant::SingleLine);
-
-                let show_scan = self.selected_path.is_some();
-                let row_count = if show_scan { 5 } else { 3 };
-
-                let content = center(inner, Constraint::Fill(1), Constraint::Length(row_count));
-                let rows = Layout::vertical(vec![Constraint::Length(1); row_count as usize]).split(content);
-
-                render_centered_button(frame, explore_button, rows[0]);
-                if show_scan {
-                    render_centered_button(frame, scan_button, rows[2]);
-                    render_centered_button(frame, exit_button, rows[4]);
-                } else {
-                    render_centered_button(frame, exit_button, rows[2]);
-                }
-            })?;
-
-            if let Event::Key(key) = read()? {
-                match key.code {
-                    KeyCode::Char('q') => self.exit(),
-                    KeyCode::Down => {
-                        self.focus.next();
-                        if self.selected_path.is_none() && self.focus.is_focused(&FocusTarget::Scan) {
-                            self.focus.next();
-                        }
-                    }
-                    KeyCode::Up => {
-                        self.focus.prev();
-                        if self.selected_path.is_none() && self.focus.is_focused(&FocusTarget::Scan) {
-                            self.focus.prev();
-                        }
-                    }
-                    KeyCode::Enter => {
-                        if self.focus.is_focused(&FocusTarget::Exit) {
-                            self.exit();
-                        } else if self.focus.is_focused(&FocusTarget::Scan) {
-                            if let Some(path) = self.selected_path.clone() {
-                                self.scanning(terminal, path)?;
-                                self.scan_results(terminal)?;
-                            }
-                        } else if self.focus.is_focused(&FocusTarget::Explore) {
-                            let path = self.open_file_explorer(terminal)?;
-                            if !path.is_empty() {
-                                self.selected_path = Some(path);
-                            }
-                            self.focus.next();
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(())
     }
 
     fn open_file_explorer(&mut self, terminal: &mut DefaultTerminal) -> io::Result<String> {
