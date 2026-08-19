@@ -48,32 +48,39 @@ fn render_centered_button(frame: &mut Frame, button: Button, row: Rect) {
     frame.render_widget(button, area);
 }
 
-fn results_table(results: &[&FilePIIs]) -> Table<'static> {
-    let header = Row::new(["file path", "email accounts", "phone numbers", "other piis"])
+fn results_table(results: &[&FilePIIs], show_full_path: bool) -> Table<'static> {
+    let primary_column = if show_full_path {"file path"} else {"filename"};
+    let header = Row::new([primary_column, "email accounts", "phone numbers", "other piis", "total"])
         .style(Style::new().bold())
         .bottom_margin(1);
 
 
     let rows: Vec<Row> = results.iter().map(|pii| {
+        let path_str = &pii.filename.clone();
+        let path = Path::new(path_str);
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        let primary_column_value = if show_full_path {path_str.clone()} else {filename.to_string()};
         let total = severity_total(pii);
         Row::new([
-            pii.filename.clone(),
+            primary_column_value,
             pii.email_accounts.len().to_string(),
             pii.phone_numbers.len().to_string(),
             pii.other_piis.len().to_string(),
+            total.to_string(),
         ]).style(Style::new().fg(severity_color(total)))
     }).collect();
 
     let widths = [
-        Constraint::Percentage(70),
+        Constraint::Percentage(65),
         Constraint::Percentage(10),
         Constraint::Percentage(10),
-        Constraint::Percentage(10),
+        Constraint::Percentage(8),
+        Constraint::Percentage(5),
     ];
 
     Table::new(rows, widths)
         .header(header)
-        .column_spacing(1)
+        .column_spacing(2)
         .style(Color::White)
         .row_highlight_style(Style::new().add_modifier(Modifier::REVERSED).bold())
         .column_highlight_style(Style::default())
@@ -255,6 +262,7 @@ impl App {
         let all_results: Vec<&FilePIIs> = self.results.iter().collect();
 
         let mut show_all = false;
+        let mut show_full_path = false;
 
         let mut table_state = TableState::default();
         table_state.select_first();
@@ -274,6 +282,7 @@ impl App {
                     " (↓) ".bold(), "next |".into(),
                     " (Enter) ".bold(), "expand |".into(),
                     " (h) ".bold(), "toggle empty |".into(),
+                    " (p) ".bold(), "toggle full path |".into(),
                     " (q) ".bold(), "quit ".into(),
                 ]);
                 let block = app_block(Some(instructions));
@@ -290,7 +299,7 @@ impl App {
                         ])
                         .split(inner);
     
-                    let table = results_table(&sorted_results);
+                    let table = results_table(&sorted_results, show_full_path);
                     frame.render_stateful_widget(table, split[0], &mut table_state);
     
                     if let Some(pii) = table_state.selected().and_then(|i| visible.get(i).copied()) {
@@ -302,7 +311,7 @@ impl App {
                         )
                     }
                 } else {
-                    let table = results_table(&sorted_results);
+                    let table = results_table(&sorted_results, show_full_path);
                     frame.render_stateful_widget(table, inner, &mut table_state);
                 }
             })?;
@@ -314,6 +323,9 @@ impl App {
                         show_all = !show_all;
                         table_state.select_first();
                         table_state.select_first_column();
+                    },
+                    KeyCode::Char('p') => {
+                        show_full_path = !show_full_path;
                     }
                     KeyCode::Down => table_state.select_next(),
                     KeyCode::Up => table_state.select_previous(),
